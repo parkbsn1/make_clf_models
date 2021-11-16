@@ -224,11 +224,40 @@ class MAKE_CLF_MODELS(Process):
         except Exception as ex:
             self.logger.critical("Make_split_data Error")
 
-    def put_model(self, model_name, model_type, host, score1, score2, commnet, file_name, img_name):
+    def Make_Score_confusion_matrix(self, y_real, y_pred, model_NM='title'):
         try:
+            file_path = os.path.join(self.model_scaler_path, model_NM + '.png')
+            plt.figure(figsize=(8, 6))
+            plt.title(model_NM)
+
+            target_col_dict = {0.0: "Normal", 1.0: "Dongle_NW_Failure", 2.0: "POS_SW_Failure", 3.0: "Dongle_HW_Failure"}
+            # target_col=["Normal", "Dongle_NW_Failure", "POS_SW_Failure", "Dongle_HW_Failure"]
+            target_col = []
+            for k, v in target_col_dict.items():
+                if k in y_real:
+                    target_col.append(v)
+
+            cm = confusion_matrix(y_real, y_pred)
+            sns.set(rc={'figure.figsize': (5, 5)})
+            sns.heatmap(pd.DataFrame(cm, index=target_col, columns=target_col)[::-1], annot=True, fmt='d', annot_kws={"size": 15})
+            plt.ylabel('Actual')
+            plt.xlabel('Predict')
+            plt.savefig(file_path)
+            #plt.show()
+            return file_path
+
+        except Exception as ex:
+            self.logger.critical("Make_Score_confusion_matrix Error")
+
+    def put_model(self, model_name, model_type, host, score1, score2, commnet, img_name, scaler_name):
+        try:
+            model_path = os.path.join(self.model_scaler_path, model_name+'.joblib')
+            img_path = os.path.join(self.model_scaler_path, model_name+'.png')
+            scaler_path = os.path.join(self.model_scaler_path, 'scaler.joblib')
+
             url = f"http://10.56.38.175/models/{model_name}"
-            files = [(file_name, open(file_name, "rb")), (img_name, open(img_name, "rb"))]
-            data = {"model_name": model_name, "model_type":model_type, "host":host, "score1": score1, "score2": score2, "commnet": commnet}
+            files = [(model_name, open(model_path, "rb")), (img_name, open(img_path, "rb")),(scaler_name, open(scaler_path, "rb"))]
+            data = {"model_type":model_type, "host":host, "score1": score1, "score2": score2, "commnet": commnet}
             res = requests.put(url, data=data, files=files)
             self.logger.info(f"put_model result: {res.status_code}")
         except Exception as ex:
@@ -293,13 +322,19 @@ class MAKE_CLF_MODELS(Process):
         # 모델평가(간단)
         model_f1 = {}
         model_acc = {}
+        model_cm = {}
         for model_NM, model_pred in pred_models.items():
             # print(f"{model_NM} : {(round(accuracy_score(y_test, model_pred), 4))} | {(round(f1_score(y_test, model_pred, average='weighted'), 4))}" )
             model_acc[model_NM] = accuracy_score(y_test, model_pred)  # 모델별 정확도
             model_f1[model_NM] = f1_score(y_test, model_pred, average='weighted')  # 모델별 f1-score
 
+            # confusion matrix
+            model_cm[model_NM] = self.Make_Score_confusion_matrix(y_test, model_pred, model_NM)
+
         for k, v in model_acc.items():
             self.logger.info(f"{k}:  acc({model_acc[k]}) / f1({model_f1[k]})")
+
+
 
 
 if __name__ == '__main__':

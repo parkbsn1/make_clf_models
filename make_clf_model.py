@@ -4,8 +4,7 @@ import os
 import subprocess
 import logging
 import requests
-import time
-#from common_code import *
+import joblib #import sklearn.external.joblib as extjoblib
 import set_clf_models
 
 from datetime import datetime, timezone, timedelta
@@ -13,16 +12,11 @@ from elasticsearch import Elasticsearch, helpers
 from configparser import ConfigParser
 from logging.handlers import RotatingFileHandler
 from multiprocessing import Process
-from collections import Counter
 
-#
 # #모델 평가
-from sklearn.metrics import confusion_matrix, classification_report
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
-#
-# #모델 저장
-from tensorflow.keras.models import load_model
-#
+from sklearn.metrics import confusion_matrix
+from sklearn.metrics import accuracy_score, f1_score
+
 # #시각화
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -32,21 +26,6 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.preprocessing import StandardScaler
 from imblearn.over_sampling import RandomOverSampler, SMOTE, BorderlineSMOTE, ADASYN
-
-#분류 모델
-from sklearn.neighbors import KNeighborsClassifier
-from sklearn.ensemble import RandomForestClassifier, AdaBoostClassifier
-from sklearn.naive_bayes import GaussianNB, MultinomialNB
-from sklearn.tree import DecisionTreeClassifier
-# from xgboost import XGBClassifier #xgboost-사이킷래퍼
-# import xgboost as xgb ## xgboost-파이썬래퍼
-from sklearn.ensemble import GradientBoostingClassifier
-# from lightgbm import LGBMClassifier
-from sklearn.ensemble import BaggingClassifier
-from sklearn.svm import SVC
-from sklearn.ensemble import VotingClassifier
-
-import joblib #import sklearn.external.joblib as extjoblib
 
 class MAKE_CLF_MODELS(Process):
     def __init__(self, conf_name):
@@ -137,7 +116,7 @@ class MAKE_CLF_MODELS(Process):
                         }''' % (t1, t2)
 
             index_name = self.train_index + '*'
-            es_result = self.ES.search(index=index_name, body=qry, size=10000)  # , scroll="1m")
+            es_result = self.ES.search(index=index_name, body=qry, size=30000)  # , scroll="1m")
 
             es_result_total = int(es_result['hits']['total']['value'])  # 검색결과 수
             if es_result_total == 0:
@@ -161,7 +140,7 @@ class MAKE_CLF_MODELS(Process):
             f.close()
             return new_line
         except Exception as ex:
-            self.logger.critical("Read_col_list Error")
+            self.logger.critical(f"Read_col_list Error: {ex}")
 
     def data_missing_value(self, es_list):
         try:
@@ -169,16 +148,10 @@ class MAKE_CLF_MODELS(Process):
             train_df = train_df.fillna(0)
             return train_df
         except Exception as ex:
-            self.logger.critical("data_missing_value Error")
+            self.logger.critical(f"data_missing_value Error: {ex}")
 
     def make_oversampling(self, x, y, flag='ads', random_state=2022):
         try:
-            # print(f"Raw dataset shape: {Counter(y)}")
-            # print(f"type x: {type(x)} | type: y: {type(y)}")
-            # print(f"shape x: {x.shape} | shape: y: {y.shape}")
-            # ros = RandomOverSampler(random_state = 42)
-            # x_oversample, y_oversample = ros.fit_resample(x, y)
-
             if flag == 'ros':
                 oversampling = RandomOverSampler(random_state=42)
             elif flag == 'smote':
@@ -191,7 +164,7 @@ class MAKE_CLF_MODELS(Process):
 
             return x_oversample, y_oversample
         except Exception as ex:
-            self.logger.critical("make_oversampling Error")
+            self.logger.critical(f"make_oversampling Error: {ex}")
 
     def Make_Scaler(self, x_train, x_test, func='sds'):
         try:
@@ -212,7 +185,7 @@ class MAKE_CLF_MODELS(Process):
 
             return x_train, x_test
         except Exception as ex:
-            self.logger.critical("Make_Scaler Error")
+            self.logger.critical(f"Make_Scaler Error: {ex}")
 
     # train_test_split
     def Make_split_data(self, x, y, test_size=0.3, random_state=2021):
@@ -222,12 +195,12 @@ class MAKE_CLF_MODELS(Process):
             self.logger.info(f'x_test.shape: {x_test.shape} | y_test.shape: {y_test.shape}')
             return x_train, x_test, y_train, y_test
         except Exception as ex:
-            self.logger.critical("Make_split_data Error")
+            self.logger.critical(f"Make_split_data Error: {ex}")
 
     def Make_Score_confusion_matrix(self, y_real, y_pred, model_NM='title'):
         try:
             file_path = os.path.join(self.model_scaler_path, model_NM + '.png')
-            plt.figure(figsize=(8, 6))
+            plt.figure(figsize=(10, 8))
             plt.title(model_NM)
 
             target_col_dict = {0.0: "Normal", 1.0: "Dongle_NW_Failure", 2.0: "POS_SW_Failure", 3.0: "Dongle_HW_Failure"}
@@ -238,7 +211,7 @@ class MAKE_CLF_MODELS(Process):
                     target_col.append(v)
 
             cm = confusion_matrix(y_real, y_pred)
-            sns.set(rc={'figure.figsize': (5, 5)})
+            sns.set(rc={'figure.figsize': (6, 6)})
             sns.heatmap(pd.DataFrame(cm, index=target_col, columns=target_col)[::-1], annot=True, fmt='d', annot_kws={"size": 15})
             plt.ylabel('Actual')
             plt.xlabel('Predict')
@@ -247,7 +220,7 @@ class MAKE_CLF_MODELS(Process):
             return file_path
 
         except Exception as ex:
-            self.logger.critical("Make_Score_confusion_matrix Error")
+            self.logger.critical(f"Make_Score_confusion_matrix Error: {ex}")
 
     def put_model(self, model_name, model_type, host, score1, score2, commnet, img_name, scaler_name):
         try:
@@ -256,12 +229,15 @@ class MAKE_CLF_MODELS(Process):
             scaler_path = os.path.join(self.model_scaler_path, 'scaler.joblib')
 
             url = f"http://10.56.38.175/models/{model_name}"
-            files = [(model_name, open(model_path, "rb")), (img_name, open(img_path, "rb")),(scaler_name, open(scaler_path, "rb"))]
-            data = {"model_type":model_type, "host":host, "score1": score1, "score2": score2, "commnet": commnet}
+            #model(model_000.joblib), result(result_000.png), scaler(scaler.joblib)
+            files = [('model_'+model_name, open(model_path, "rb")), ('result_'+ img_name, open(img_path, "rb")),(scaler_name, open(scaler_path, "rb"))]
+            data = {"model_name": model_name, "model_type":model_type, "host":host, "score1": score1, "score2": score2, "commnet": commnet}
+            self.logger.info(f"files: {files}")
+            self.logger.info(f"data: {data}")
             res = requests.put(url, data=data, files=files)
             self.logger.info(f"put_model result: {res.status_code}")
         except Exception as ex:
-            self.logger.critical("put_model Error")
+            self.logger.critical(f"put_model Error: {ex}")
 
     def main(self):
         #elastic에서 학습 데이터 쿼리: Request_Train_data()
@@ -281,6 +257,7 @@ class MAKE_CLF_MODELS(Process):
         y = train_df['failure_category'].values.astype(float)  # label필드(failure_category)만
         y[-1] = 1.0
         y[-2] = 2.0
+        y[-3] = 3.0
         X_oversample, y_oversample = self.make_oversampling(x, y, 'ros', 1988)
 
         # train_test_split
@@ -301,7 +278,7 @@ class MAKE_CLF_MODELS(Process):
             'SVC': set_clf_models.Set_SVC()
         }
         #'LGBMClassifier': set_clf_models.Set_LGBMClassifier(),
-        # 'XGBClassifier_sk': Set_XGBClassifier_sk()
+        #'XGBClassifier_sk': Set_XGBClassifier_sk()
         model_dicts['voting'] = set_clf_models.Set_voting(model_dicts)  # voting 모델 추가 선언
 
         #모델 fit
@@ -314,7 +291,7 @@ class MAKE_CLF_MODELS(Process):
 
         #모델 저장
         for model_name, fit_model in fit_models.items():
-            file_name = model_name+'.joblib'
+            file_name = model_name +'.joblib'
             model_path = os.path.join(self.model_scaler_path, file_name)
             joblib.dump(fit_model, model_path)
             self.logger.info(f"{model_name} model saved ")
@@ -331,9 +308,10 @@ class MAKE_CLF_MODELS(Process):
             # confusion matrix
             model_cm[model_NM] = self.Make_Score_confusion_matrix(y_test, model_pred, model_NM)
 
-        for k, v in model_acc.items():
-            self.logger.info(f"{k}:  acc({model_acc[k]}) / f1({model_f1[k]})")
+            self.logger.info(f"{model_NM}:  acc({model_acc[model_NM]}) / f1({model_f1[model_NM]})")
 
+            #self.put_model(model_name, model_type, host, score1, score2, commnet, img_name, scaler_name)
+            self.put_model(model_NM, 'clf', 'none', model_acc[model_NM], model_f1[model_NM], 'test', model_NM, 'scaler')
 
 
 
